@@ -1,0 +1,20 @@
+# this is a fast api python .gitignore file, please write all that is necessary
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+# C extensions
+*.so
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+./firebase.json
+firebase.json
