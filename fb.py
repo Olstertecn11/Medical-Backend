@@ -1,5 +1,6 @@
-# backend/fb.py
 import os
+from typing import Optional
+
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, db
@@ -19,10 +20,31 @@ if not firebase_admin._apps:
     cred = credentials.Certificate(CRED_PATH)
     firebase_admin.initialize_app(cred, {"databaseURL": FIREBASE_DB_URL})
 
+
 def ref(path: str):
-    """Atajo para obtener una referencia a RTDB."""
     return db.reference(path)
 
-def key(s: str) -> str:
-    """Llave segura para RTDB (evita . # $ [ ])"""
-    return s.lower().replace(".", "_").replace("#", "_").replace("$", "_").replace("[", "_").replace("]", "_").replace(" ", "_")
+
+def key(value: str) -> str:
+    return (
+        str(value)
+        .strip()
+        .lower()
+        .replace(".", "_")
+        .replace("#", "_")
+        .replace("$", "_")
+        .replace("[", "_")
+        .replace("]", "_")
+        .replace(" ", "_")
+        .replace("/", "_")
+    )
+
+
+def push(path: str) -> str:
+    new_ref = ref(path).push()
+    return new_ref.key
+
+
+def get_one(path: str) -> Optional[dict]:
+    data = ref(path).get()
+    return data if isinstance(data, dict) else None

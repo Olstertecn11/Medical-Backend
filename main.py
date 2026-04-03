@@ -1,17 +1,52 @@
-# backend/main.py
+import asyncio
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# ⚠️ usa 'auth' (no 'users')
-from auth import router as auth_router            # /register, /login, /me
-from users_crud import router as users_crud_router  # /users (nuevo CRUD)
-from productos import router as productos_router     # si ya lo tienes
-from facturacion import router as facturacion_router # si ya lo tienes
+import fb
+from alertas import router as alertas_router, run_alert_scan
+from auth import legacy_router as auth_legacy_router
+from auth import router as auth_router
+from historial import router as historial_router
+from medicamentos import router as medicamentos_router
+from pacientes import router as pacientes_router
+from pedidos import router as pedidos_router
 
-# --- Si inicializas Firebase en otro módulo (fb.py), impórtalo para que se ejecute:
-import fb  # asegura que fb.py hace el initialize_app()
+ALERT_SCAN_INTERVAL_SECONDS = int(os.getenv("ALERT_SCAN_INTERVAL_SECONDS", "3600"))
+ENABLE_ALERT_SCANNER = os.getenv("ENABLE_ALERT_SCANNER", "true").lower() == "true"
 
-app = FastAPI(title="POS API (FastAPI + Firebase)")
+
+async def _alert_scanner_loop():
+    while True:
+        try:
+            run_alert_scan()
+        except Exception as exc:
+            print(f"[alert_scanner] error: {exc}")
+        await asyncio.sleep(ALERT_SCAN_INTERVAL_SECONDS)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = None
+    if ENABLE_ALERT_SCANNER:
+        task = asyncio.create_task(_alert_scanner_loop())
+    yield
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(
+    title="Sistema de Pacientes Crónicos API",
+    version="1.0.0",
+    description="API para gestión de pacientes, historial clínico, pedidos de medicamentos y alertas de refill.",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,8 +56,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
+
+@app.get("/")
+def root():
+    return {
+        "name": "Sistema de Pacientes Crónicos API",
+        "status": "ok",
+        "modules": [
+            "auth",
+            "pacientes",
+            "medicamentos",
+            "historial_clinico",
+            "pedidos",
+            "alertas",
+        ],
+    }
+
+
 app.include_router(auth_router)
-app.include_router(users_crud_router)
-app.include_router(productos_router)
-app.include_router(facturacion_router)
+app.include_router(auth_legacy_router)
+app.include_router(pacientes_router)
+app.include_router(medicamentos_router)
+app.include_router(historial_router)
+app.include_router(pedidos_router)
+app.include_router(alertas_router)
