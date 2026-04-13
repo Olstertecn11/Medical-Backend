@@ -27,12 +27,18 @@ def _next_number() -> str:
 
 class PedidoItem(BaseModel):
     medicamento_codigo: str
+    medicamento_id: str
     cantidad: int = Field(ge=1)
+    discount: bool
 
     @field_validator("medicamento_codigo")
     @classmethod
     def normalize_code(cls, value: str) -> str:
-        return key(value)
+        # 1. strip() elimina espacios al inicio/final
+        # 2. upper() convierte "med-001" en "MED-001"
+        # 3. key() aplica tu lógica de limpieza de Firebase
+        normalized = value.strip().upper()
+        return key(normalized)
 
 
 class PedidoCreate(BaseModel):
@@ -56,7 +62,8 @@ def crear_pedido(body: PedidoCreate):
     subtotal = 0.0
 
     for item in body.items:
-        medicamento = ref(f"medicamentos/{item.medicamento_codigo}").get()
+        medicamento = ref(f"medicamentos/{item.medicamento_id}").get()
+        item.medicamento_codigo = item.medicamento_codigo.split("-")[0].upper() + "-" + item.medicamento_codigo.split("-")[1]
         if not medicamento:
             raise HTTPException(404, f"Medicamento {item.medicamento_codigo} no encontrado")
         stock = int(medicamento.get("stock", 0))
@@ -64,6 +71,7 @@ def crear_pedido(body: PedidoCreate):
             raise HTTPException(409, f"Stock insuficiente para {medicamento.get('nombre', item.medicamento_codigo)}")
 
         precio = float(medicamento.get("precio", 0))
+        precio = precio +(precio* (0.1 if item.discount else 1.0)) 
         refill_dias = int(medicamento.get("refill_dias", 30))
         next_refill = (datetime.now(timezone.utc) + timedelta(days=refill_dias)).isoformat()
         refill_dates.append(next_refill)

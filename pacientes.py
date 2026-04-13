@@ -27,7 +27,13 @@ class PacienteBase(BaseModel):
 
 class PacienteCreate(PacienteBase):
     dpi: Optional[str] = None
-    numero_expediente: Optional[str] = None
+
+def generar_numero_expediente() -> str:
+    counter_ref = ref("counters/pacientes_expediente")
+    current = counter_ref.get() or 0
+    next_value = int(current) + 1
+    counter_ref.set(next_value)
+    return f"PAC-{next_value:06d}"
 
 
 class PacienteUpdate(BaseModel):
@@ -44,7 +50,6 @@ class PacienteUpdate(BaseModel):
     alergias: Optional[List[str]] = None
     observaciones: Optional[str] = None
     dpi: Optional[str] = None
-    numero_expediente: Optional[str] = None
     activo: Optional[bool] = None
 
 
@@ -74,12 +79,55 @@ def listar_pacientes(q: Optional[str] = None, activos: Optional[bool] = None):
     return items
 
 
+@router.get("/with-discount/{paciente_id}")
+def obtener_paciente_con_descuento(paciente_id: str):
+    paciente = ref(f"pacientes/{paciente_id}").get()
+    if not paciente:
+        raise HTTPException(404, "Paciente no encontrado")
+
+    todos_los_pedidos = ref("pedidos").get() or {}
+    
+    pedidos_paciente = [
+        p for p in todos_los_pedidos.values() 
+        if p.get("paciente_id") == paciente_id and p.get("estado") == "completado"
+    ]
+
+    # 4. Lógica de ejemplo: Conteo para beneficios
+    total_compras = sum(float(p.get("total", 0)) for p in pedidos_paciente)
+    conteo_pedidos = len(pedidos_paciente)
+    
+    # Supongamos que si tiene más de 5 pedidos completados, es "Premium"
+    es_frecuente = conteo_pedidos >= 5
+    descuento_sugerido = 0.10 if es_frecuente else 0.0
+
+    return {
+        "paciente": {
+            "id": paciente_id,
+            "nombre_completo": f"{paciente.get('nombres')} {paciente.get('apellidos')}",
+            "tipo": "Frecuente" if es_frecuente else "Regular"
+        },
+        "estadisticas": {
+            "total_pedidos_completados": conteo_pedidos,
+            "total_invertido": round(total_compras, 2),
+            "proxima_recarga_mas_cercana": min([p.get("proxima_recarga_general") for p in pedidos_paciente if p.get("proxima_recarga_general")], default=None)
+        },
+        "beneficios": {
+            "aplica_descuento": es_frecuente,
+            "porcentaje_descuento": descuento_sugerido,
+            "mensaje": "¡Usuario Premium! Aplica 10% de descuento" if es_frecuente else "Le faltan {} pedidos para descuento".format(5 - conteo_pedidos)
+        }
+    }
+
+
+
+
 @router.post("")
 def crear_paciente(body: PacienteCreate):
     paciente_id = push("pacientes")
     payload = body.model_dump(exclude_none=True)
     payload["created_at"] = int(time.time())
     payload["updated_at"] = int(time.time())
+    payload["numero_expediente"] = generar_numero_expediente()
     ref(f"pacientes/{paciente_id}").set(payload)
     return _with_id(paciente_id, payload)
 

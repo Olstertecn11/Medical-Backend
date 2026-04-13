@@ -1,17 +1,15 @@
 import time
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from fb import key, ref
+from fb import ref, push # Asegúrate de tener push para generar IDs únicos si prefieres
 
 router = APIRouter(prefix="/medicamentos", tags=["Medicamentos"])
 
-
-class Medicamento(BaseModel):
-    codigo: str
-    nombre: str
+class MedicamentoBase(BaseModel):
+    nombre: str = Field(min_length=2)
     descripcion: Optional[str] = None
     presentacion: Optional[str] = None
     concentracion: Optional[str] = None
@@ -22,19 +20,31 @@ class Medicamento(BaseModel):
     refill_dias: int = Field(default=30, ge=1)
     activo: bool = True
 
+class MedicamentoCreate(MedicamentoBase):
+    codigo: Optional[str] = None # Se generará automáticamente si no se envía
+
+def generar_codigo_medicamento() -> str:
+    counter_ref = ref("counters/medicamentos_codigo")
+    current = counter_ref.get() or 0
+    next_value = int(current) + 1
+    counter_ref.set(next_value)
+    # Formato MED-000001
+    return f"MED-{next_value:06d}"
 
 @router.post("")
-def crear_medicamento(body: Medicamento):
-    med_key = key(body.codigo)
-    existing = ref(f"medicamentos/{med_key}").get()
-    if existing:
-        raise HTTPException(400, "El medicamento ya existe")
+def crear_medicamento(body: MedicamentoCreate):
+    # Generamos el código automático
+    nuevo_codigo = generar_codigo_medicamento()
+    
     payload = body.model_dump()
+    payload["codigo"] = nuevo_codigo
     payload["created_at"] = int(time.time())
     payload["updated_at"] = int(time.time())
-    ref(f"medicamentos/{med_key}").set(payload)
-    return {"id": med_key, **payload}
-
+    
+    # Usamos el código generado como la llave en la base de datos
+    ref(f"medicamentos/{nuevo_codigo}").set(payload)
+    
+    return {"id": nuevo_codigo, **payload}
 
 @router.get("")
 def listar_medicamentos(q: Optional[str] = None, activos: Optional[bool] = None, bajo_stock: Optional[bool] = None):
@@ -59,34 +69,31 @@ def listar_medicamentos(q: Optional[str] = None, activos: Optional[bool] = None,
     items.sort(key=lambda x: x.get("nombre", ""))
     return items
 
-
-@router.get("/{codigo}")
-def obtener_medicamento(codigo: str):
-    med_key = key(codigo)
-    data = ref(f"medicamentos/{med_key}").get()
+@router.get("/{id}") # Cambiamos a ID para ser consistentes
+def obtener_medicamento(id: str):
+    data = ref(f"medicamentos/{id}").get()
     if not data:
         raise HTTPException(404, "Medicamento no encontrado")
-    return {"id": med_key, **data}
+    return {"id": id, **data}
 
-
-@router.put("/{codigo}")
-def actualizar_medicamento(codigo: str, body: Medicamento):
-    med_key = key(codigo)
-    current = ref(f"medicamentos/{med_key}").get()
-    if not current:
+@router.put("/{id}")
+def actualizar_medicamento(id: str, body: MedicamentoBase):
+    current_ref = ref(f"medicamentos/{id}")
+    current_data = current_ref.get()
+    
+    if not current_data:
         raise HTTPException(404, "Medicamento no encontrado")
+    
     payload = body.model_dump()
     payload["updated_at"] = int(time.time())
-    ref(f"medicamentos/{med_key}").update(payload)
-    current.update(payload)
-    return {"id": med_key, **current}
+    
+    current_ref.update(payload)
+    return {"id": id, **payload}
 
-
-@router.delete("/{codigo}")
-def eliminar_medicamento(codigo: str):
-    med_key = key(codigo)
-    current = ref(f"medicamentos/{med_key}").get()
-    if not current:
+@router.delete("/{id}")
+def eliminar_medicamento(id: str):
+    current_ref = ref(f"medicamentos/{id}")
+    if not current_ref.get():
         raise HTTPException(404, "Medicamento no encontrado")
-    ref(f"medicamentos/{med_key}").delete()
+    current_ref.delete()
     return {"ok": True, "message": "Medicamento eliminado"}
