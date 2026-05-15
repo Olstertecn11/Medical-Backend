@@ -13,6 +13,7 @@ from historial import router as historial_router
 from medicamentos import router as medicamentos_router
 from pacientes import router as pacientes_router
 from pedidos import router as pedidos_router
+from users_crud import router as users_router
 
 ALERT_SCAN_INTERVAL_SECONDS = int(os.getenv("ALERT_SCAN_INTERVAL_SECONDS", "3600"))
 ENABLE_ALERT_SCANNER = os.getenv("ENABLE_ALERT_SCANNER", "true").lower() == "true"
@@ -69,6 +70,7 @@ def root():
             "historial_clinico",
             "pedidos",
             "alertas",
+            "usuarios",
         ],
     }
 
@@ -80,3 +82,4 @@ app.include_router(medicamentos_router)
 app.include_router(historial_router)
 app.include_router(pedidos_router)
 app.include_router(alertas_router)
+app.include_router(users_router)

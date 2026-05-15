@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 from fb import push, ref
 
 router = APIRouter(prefix="/pacientes", tags=["Pacientes"])
+PEDIDOS_PARA_DESCUENTO = 5
 
 
 class PacienteBase(BaseModel):
@@ -88,23 +89,30 @@ def obtener_paciente_con_descuento(paciente_id: str):
     todos_los_pedidos = ref("pedidos").get() or {}
     
     pedidos_paciente = [
-        p for p in todos_los_pedidos.values() 
-        if p.get("paciente_id") == paciente_id and p.get("estado") == "completado"
+        p for p in todos_los_pedidos.values()
+        if p.get("paciente_id") == paciente_id
+    ]
+    descuentos_previos = [p for p in pedidos_paciente if p.get("descuento_aplicado")]
+    ultima_fecha_descuento = max(
+        [p.get("created_at", "") for p in descuentos_previos if p.get("created_at")],
+        default="",
+    )
+    pedidos_completados_para_descuento = [
+        p for p in pedidos_paciente
+        if p.get("estado") == "completado" and p.get("created_at", "") > ultima_fecha_descuento
     ]
 
-    # 4. Lógica de ejemplo: Conteo para beneficios
-    total_compras = sum(float(p.get("total", 0)) for p in pedidos_paciente)
-    conteo_pedidos = len(pedidos_paciente)
-    
-    # Supongamos que si tiene más de 5 pedidos completados, es "Premium"
-    es_frecuente = conteo_pedidos >= 5
+    total_compras = sum(float(p.get("total", 0)) for p in pedidos_paciente if p.get("estado") == "completado")
+    conteo_pedidos = len(pedidos_completados_para_descuento)
+    faltantes = max(PEDIDOS_PARA_DESCUENTO - conteo_pedidos, 0)
+    es_frecuente = conteo_pedidos >= PEDIDOS_PARA_DESCUENTO
     descuento_sugerido = 0.10 if es_frecuente else 0.0
 
     return {
         "paciente": {
             "id": paciente_id,
             "nombre_completo": f"{paciente.get('nombres')} {paciente.get('apellidos')}",
-            "tipo": "Frecuente" if es_frecuente else "Regular"
+            "tipo": "Con descuento disponible" if es_frecuente else "Regular"
         },
         "estadisticas": {
             "total_pedidos_completados": conteo_pedidos,
@@ -114,7 +122,9 @@ def obtener_paciente_con_descuento(paciente_id: str):
         "beneficios": {
             "aplica_descuento": es_frecuente,
             "porcentaje_descuento": descuento_sugerido,
-            "mensaje": "¡Usuario Premium! Aplica 10% de descuento" if es_frecuente else "Le faltan {} pedidos para descuento".format(5 - conteo_pedidos)
+            "pedidos_requeridos": PEDIDOS_PARA_DESCUENTO,
+            "pedidos_faltantes": faltantes,
+            "mensaje": "Aplica 10% de descuento en el próximo pedido" if es_frecuente else "Le faltan {} pedidos para descuento".format(faltantes)
         }
     }
 

@@ -10,6 +10,8 @@ from fb import key, ref
 router = APIRouter(prefix="/pedidos", tags=["Pedidos de Medicamentos"])
 
 COUNTER_PATH = "counters/pedido_seq"
+PEDIDOS_PARA_DESCUENTO = 5
+DESCUENTO_FIDELIDAD = 0.10
 
 
 def _utc_now_iso() -> str:
@@ -29,7 +31,7 @@ class PedidoItem(BaseModel):
     medicamento_codigo: str
     medicamento_id: str
     cantidad: int = Field(ge=1)
-    discount: bool
+    discount: bool = False
 
     @field_validator("medicamento_codigo")
     @classmethod
@@ -49,6 +51,23 @@ class PedidoCreate(BaseModel):
     items: List[PedidoItem]
 
 
+def _paciente_tiene_descuento_disponible(paciente_id: str) -> bool:
+    pedidos = ref("pedidos").get() or {}
+    pedidos_paciente = [
+        pedido for pedido in pedidos.values()
+        if pedido.get("paciente_id") == paciente_id
+    ]
+    ultima_fecha_descuento = max(
+        [p.get("created_at", "") for p in pedidos_paciente if p.get("descuento_aplicado") and p.get("created_at")],
+        default="",
+    )
+    completados_despues_descuento = [
+        pedido for pedido in pedidos_paciente
+        if pedido.get("estado") == "completado" and pedido.get("created_at", "") > ultima_fecha_descuento
+    ]
+    return len(completados_despues_descuento) >= PEDIDOS_PARA_DESCUENTO
+
+
 @router.post("")
 def crear_pedido(body: PedidoCreate):
     paciente = ref(f"pacientes/{body.paciente_id}").get()
@@ -60,6 +79,7 @@ def crear_pedido(body: PedidoCreate):
     items_finales = []
     refill_dates = []
     subtotal = 0.0
+    aplica_descuento = _paciente_tiene_descuento_disponible(body.paciente_id)
 
     for item in body.items:
         medicamento = ref(f"medicamentos/{item.medicamento_id}").get()
@@ -71,18 +91,20 @@ def crear_pedido(body: PedidoCreate):
             raise HTTPException(409, f"Stock insuficiente para {medicamento.get('nombre', item.medicamento_codigo)}")
 
         precio = float(medicamento.get("precio", 0))
-        precio = precio +(precio* (0.1 if item.discount else 1.0)) 
+        precio_final = precio * (1 - DESCUENTO_FIDELIDAD) if aplica_descuento else precio
         refill_dias = int(medicamento.get("refill_dias", 30))
         next_refill = (datetime.now(timezone.utc) + timedelta(days=refill_dias)).isoformat()
         refill_dates.append(next_refill)
-        subtotal += precio * item.cantidad
+        subtotal += precio_final * item.cantidad
 
         items_finales.append({
             "medicamento_codigo": item.medicamento_codigo,
             "medicamento_nombre": medicamento.get("nombre"),
             "cantidad": item.cantidad,
-            "precio_unitario": precio,
-            "subtotal": round(precio * item.cantidad, 2),
+            "precio_unitario": round(precio_final, 2),
+            "precio_original": round(precio, 2),
+            "descuento_aplicado": aplica_descuento,
+            "subtotal": round(precio_final * item.cantidad, 2),
             "refill_dias": refill_dias,
             "proxima_recarga": next_refill,
         })
@@ -118,6 +140,8 @@ def crear_pedido(body: PedidoCreate):
         "dias_alerta_anticipacion": body.dias_alerta_anticipacion,
         "estado": "activo",
         "total": round(subtotal, 2),
+        "descuento_aplicado": aplica_descuento,
+        "porcentaje_descuento": DESCUENTO_FIDELIDAD if aplica_descuento else 0,
         "proxima_recarga_general": overall_next_refill,
         "items": items_finales,
     }
@@ -159,3 +183,15 @@ def actualizar_estado_pedido(pedido_id: str, estado: str):
     ref(f"pedidos/{pedido_key}").update(updates)
     current.update(updates)
     return current
+
+
+@router.delete("/{pedido_id}")
+def eliminar_pedido_completado(pedido_id: str):
+    pedido_key = key(pedido_id)
+    current = ref(f"pedidos/{pedido_key}").get()
+    if not current:
+        raise HTTPException(404, "Pedido no encontrado")
+    if current.get("estado") != "completado":
+        raise HTTPException(400, "Solo se puede eliminar del historial un pedido completado")
+    ref(f"pedidos/{pedido_key}").delete()
+    return {"ok": True, "message": "Pedido eliminado del historial"}
