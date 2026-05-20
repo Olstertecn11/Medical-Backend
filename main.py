@@ -9,6 +9,7 @@ import fb
 from alertas import router as alertas_router, run_alert_scan
 from auth import legacy_router as auth_legacy_router
 from auth import router as auth_router
+from facturacion import router as facturacion_router
 from historial import router as historial_router
 from medicamentos import router as medicamentos_router
 from pacientes import router as pacientes_router
@@ -69,6 +70,7 @@ def root():
             "medicamentos",
             "historial_clinico",
             "pedidos",
+            "facturacion",
             "alertas",
             "usuarios",
         ],
@@ -81,5 +83,6 @@ app.include_router(pacientes_router)
 app.include_router(medicamentos_router)
 app.include_router(historial_router)
 app.include_router(pedidos_router)
+app.include_router(facturacion_router)
 app.include_router(alertas_router)
 app.include_router(users_router)
